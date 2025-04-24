@@ -78,7 +78,7 @@ watch(
         <div class="input-group">
             <input
                 id="trackerLinkEntry"
-                placeholder="https://archipelago.gg/tracker/..."
+                placeholder="https://multiworld.gg/tracker/..."
                 type="text"
                 class="form-control"
                 v-model="trackerLink"

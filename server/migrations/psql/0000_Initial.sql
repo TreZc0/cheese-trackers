@@ -209,7 +209,7 @@ CREATE TABLE public.ct_user (
 -- Name: ap_game; Type: VIEW; Schema: public; Owner: -
 --
 
-CREATE VIEW public.ap_game WITH (security_barrier='false', security_invoker='true') AS
+CREATE VIEW public.ap_game WITH (security_barrier='false') AS
  SELECT g.id,
     g.tracker_id,
     g.name,

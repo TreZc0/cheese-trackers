@@ -8,10 +8,8 @@ RUN apk add --no-cache musl-dev openssl-dev
 COPY server /app/server
 COPY server-macros /app/server-macros
 WORKDIR /app/server
-RUN --mount=type=cache,target=/app/server/target \
-    --mount=type=cache,target=/app/server-macros/target \
-    --mount=type=cache,target=/usr/local/cargo/registry/ \
-    RUSTFLAGS=-Ctarget-feature=-crt-static cargo build --release && \
+
+RUN RUSTFLAGS=-Ctarget-feature=-crt-static cargo build --release && \
     cp target/release/cheese-trackers-server /app
 
 

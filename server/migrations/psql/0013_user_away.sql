@@ -1,6 +1,6 @@
 ALTER TABLE ct_user ADD COLUMN is_away BOOLEAN NOT NULL DEFAULT FALSE;
 
-CREATE OR REPLACE VIEW ap_game WITH (security_barrier='false', security_invoker='true') AS
+CREATE OR REPLACE VIEW ap_game WITH (security_barrier='false') AS
  SELECT g.id,
     g.tracker_id,
     g.name,
