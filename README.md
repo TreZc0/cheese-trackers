@@ -1,10 +1,13 @@
 # Cheese Trackers
 
-An enhanced async room tracker for [Archipelago](https://archipelago.gg).  The
-canonical instance is hosted at
-[cheesetrackers.theincrediblewheelofchee.se](https://cheesetrackers.theincrediblewheelofchee.se/).
+[![Docker Image CI](https://github.com/cdhowie/cheese-trackers/actions/workflows/docker-image.yml/badge.svg)](https://github.com/cdhowie/cheese-trackers/actions/workflows/docker-image.yml)
+[![Docker Pulls](https://img.shields.io/docker/pulls/cdhowie/cheese-trackers)](https://hub.docker.com/r/cdhowie/cheese-trackers)
 
-Based on the fantastic Google spreadsheet built by RadzPrower.
+An enhanced async room tracker for [Archipelago](https://archipelago.gg) based
+on the fantastic Google spreadsheet built by RadzPrower.  The canonical instance
+is hosted at
+[cheesetrackers.theincrediblewheelofchee.se](https://cheesetrackers.theincrediblewheelofchee.se/).
+Everyone is welcome to use this instance, even for private games.
 
 Provides multiple enhancements on top of Archipelago's own web tracker, such as:
 
@@ -17,6 +20,10 @@ Provides multiple enhancements on top of Archipelago's own web tracker, such as:
 * Provides several summary views about the overall state of the room.
 * Slots can be filtered and sorted various ways.
 * Supports Discord authentication.
+
+## Installing
+
+If you would like to run your own instance, see the [install guide](INSTALL.md).
 
 ## Architecture
 
@@ -59,3 +66,18 @@ Containers are used to deploy the application.  The `build-image` script will
 use podman to build an image containing both the Rust web service and the
 compiled frontend.  The web service will serve the frontend's static assets, so
 there is no need for a separate container to serve the frontend.
+
+## How to Help
+
+There are a few ways you can help the project:
+
+* **Develop it:** If you know Rust and/or Vue, you could pick an open issue on
+  the issue tracker and work on it.
+* **Report issues:** If you've found a bug, open an issue on the issue tracker.
+  This way the problem doesn't get forgotten about, and you can even get
+  notified through GitHub when it is resolved.
+* **Request features:** You can also use the issue tracker to request new
+  features! I am always looking for ways to make Cheese Trackers better.
+* **Get your friends playing:** Archipelago is a community game and it cannot
+  exist without players.  Spreading the word and getting new players involved is
+  a great way to support the wider community.
