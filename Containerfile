@@ -15,7 +15,8 @@ RUN RUSTFLAGS=-Ctarget-feature=-crt-static cargo build --release && \
 
 
 
-FROM docker.io/node:20-bookworm AS frontendbuilder
+FROM docker.io/node:22-bookworm AS frontendbuilder-22
+
 
 WORKDIR /app
 COPY frontend/ /app
@@ -34,7 +35,7 @@ RUN apk add --no-cache ca-certificates libssl3 libgcc
 
 WORKDIR /app
 COPY --from=serverbuilder /app/cheese-trackers-server /app/
-COPY --from=frontendbuilder /app/dist /app/dist
+COPY --from=frontendbuilder-22 /app/dist /app/dist
 ARG GIT_COMMIT
 ENV CT_GIT_COMMIT=$GIT_COMMIT
 USER nobody
