@@ -1,8 +1,10 @@
-use std::{collections::HashMap, future::Future};
+use std::{collections::HashMap, future::Future, marker::PhantomData};
 
 use async_stream::stream;
 use futures::Stream;
-use sea_query::{Alias, Asterisk, Expr, Func, OnConflict, PostgresQueryBuilder, Query, SimpleExpr};
+use sea_query::{
+    Alias, Asterisk, Expr, Func, Iden, OnConflict, PostgresQueryBuilder, Query, SimpleExpr,
+};
 use sea_query_binder::SqlxBinder;
 use sqlx::{
     FromRow, PgConnection, PgPool, Postgres, migrate::MigrateError, pool::PoolConnection,
@@ -38,59 +40,59 @@ impl DataAccessProvider for PgPool {
 #[derive(Debug)]
 pub struct PgDataAccess<T>(T);
 
-/// Returns a string describing the error case where a type's [`Model::columns`]
-/// implementation omits the primary key.
-///
-/// This function is used in a few places to ensure a consistent panic message
-/// for this situation.
-fn missing_primary_key<T>() -> String {
-    format!(
-        "{0}::columns() does not contain {0}::primary_key()",
-        std::any::type_name::<T>()
-    )
+trait PgInsertStrategy {
+    type Iden: Iden + Copy + 'static;
+    type InsertionModel;
+    type InsertionResult;
+
+    fn columns() -> &'static [Self::Iden];
+
+    fn table() -> Self::Iden;
+
+    fn into_values(value: Self::InsertionModel) -> impl Iterator<Item = sea_query::Value>;
+}
+
+struct ViaModelWithPrimaryKey<T>(PhantomData<fn() -> T>);
+
+impl<T: ModelWithAutoPrimaryKey> PgInsertStrategy for ViaModelWithPrimaryKey<T> {
+    type Iden = T::Iden;
+    type InsertionModel = T::InsertionModel;
+    type InsertionResult = T;
+
+    fn columns() -> &'static [Self::Iden] {
+        T::insertion_columns()
+    }
+
+    fn table() -> Self::Iden {
+        T::table()
+    }
+
+    fn into_values(value: Self::InsertionModel) -> impl Iterator<Item = sea_query::Value> {
+        T::into_insertion_values(value)
+    }
 }
 
 /// Performs an insert of the specified values into the database.
 ///
 /// Returns a stream of the values that were inserted.
-fn pg_insert<'a, T>(
+fn pg_insert<'a, T, S>(
     executor: &'a mut PgConnection,
     values: impl IntoIterator<Item = T> + 'a,
-) -> impl Stream<Item = sqlx::Result<T>> + 'a
+) -> impl Stream<Item = sqlx::Result<S::InsertionResult>> + 'a
 where
-    T: Model + for<'b> FromRow<'b, PgRow> + Send + Unpin + 'a,
+    S: PgInsertStrategy<InsertionModel = T>,
+    S::InsertionResult: for<'b> FromRow<'b, PgRow> + Send + Unpin + 'a,
 {
     stream! {
-        // Insert ignores the primary key.  To remove the matching value we need
-        // to know its position.  The contract of Model::columns() and
-        // Model::into_values() ensures that we can simply omit the value from
-        // the matching position.
-        let id_pos = T::columns()
-            .iter()
-            .position(|&i| i == T::primary_key())
-            .ok_or_else(|| missing_primary_key::<T>())
-            .unwrap();
-
         let mut query = Query::insert().build_with(|q| {
-            q
-                .into_table(T::table())
-                .columns(
-                    T::columns()
-                        .iter()
-                        .copied()
-                        .filter(|&i| i != T::primary_key()),
-                );
+            q.into_table(S::table())
+                .columns(S::columns().iter().copied());
         });
 
         let mut any = false;
         for value in values {
             any = true;
-            query.values_panic(
-                value
-                    .into_values()
-                    .enumerate()
-                    .filter_map(|(pos, v)| (pos != id_pos).then_some(v.into())),
-            );
+            query.values_panic(S::into_values(value).map(|v| v.into()));
         }
 
         if !any {
@@ -98,9 +100,7 @@ where
             return;
         }
 
-        let (sql, values) = query
-            .returning_all()
-            .build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = query.returning_all().build_sqlx(PostgresQueryBuilder);
 
         for await row in sqlx::query_as_with(&sql, values).fetch(executor) {
             yield row;
@@ -152,7 +152,7 @@ where
 /// Deletes a row from the database by its integer primary key.
 async fn pg_delete<T>(executor: &mut PgConnection, id: i32) -> sqlx::Result<Option<T>>
 where
-    T: Model + for<'a> FromRow<'a, PgRow> + Send + Unpin,
+    T: ModelWithAutoPrimaryKey + for<'a> FromRow<'a, PgRow> + Send + Unpin,
 {
     let (sql, values) = Query::delete()
         .from_table(T::table())
@@ -184,20 +184,18 @@ async fn pg_update<T>(
     columns: &[T::Iden],
 ) -> sqlx::Result<Option<T>>
 where
-    T: Model + for<'a> FromRow<'a, PgRow> + Send + Unpin,
+    T: ModelWithAutoPrimaryKey + for<'a> FromRow<'a, PgRow> + Send + Unpin,
+    T::PrimaryKey: Into<sea_query::Value>,
 {
+    let (key, data) = value.split_primary_key();
+
     // Would be nice to avoid converting to a map here, but this simplifies a
     // lot of the code below.
-    let mut values: HashMap<_, _> = T::columns()
+    let mut values: HashMap<_, _> = T::insertion_columns()
         .iter()
         .copied()
-        .zip(value.into_values())
+        .zip(T::into_insertion_values(data))
         .collect();
-
-    let pkey = values
-        .remove(&T::primary_key())
-        .ok_or_else(|| missing_primary_key::<T>())
-        .unwrap();
 
     let columns = if columns.is_empty() {
         T::columns()
@@ -207,17 +205,17 @@ where
 
     let (sql, values) = Query::update()
         .table(T::table())
-        .values(columns.iter().copied().filter_map(|col| {
-            (col != T::primary_key()).then_some((
+        .values(columns.iter().copied().map(|col| {
+            (
                 col,
                 values
                     .remove(&col)
                     .ok_or_else(|| format!("column {col:?} appears twice"))
                     .unwrap()
                     .into(),
-            ))
+            )
         }))
-        .and_where(Expr::col(T::primary_key()).eq(pkey))
+        .and_where(Expr::col(T::primary_key()).eq(key))
         .returning_all()
         .build_sqlx(PostgresQueryBuilder);
 
@@ -249,13 +247,13 @@ impl<T: AsMut<<Postgres as sqlx::Database>::Connection> + Send> DataAccess for P
 
     fn create_ap_trackers<'s, 'v, 'f>(
         &'s mut self,
-        trackers: impl IntoIterator<Item = ApTracker> + Send + 'v,
+        trackers: impl IntoIterator<Item = ApTrackerInsertion> + Send + 'v,
     ) -> impl Stream<Item = sqlx::Result<ApTracker>> + Send + 'f
     where
         's: 'f,
         'v: 'f,
     {
-        pg_insert(self.0.as_mut(), trackers)
+        pg_insert::<_, ViaModelWithPrimaryKey<ApTracker>>(self.0.as_mut(), trackers)
     }
 
     fn update_ap_tracker(
@@ -307,13 +305,13 @@ impl<T: AsMut<<Postgres as sqlx::Database>::Connection> + Send> DataAccess for P
 
     fn create_ap_games<'s, 'v, 'f>(
         &'s mut self,
-        games: impl IntoIterator<Item = ApGame> + Send + 'v,
+        games: impl IntoIterator<Item = ApGameInsertion> + Send + 'v,
     ) -> impl Stream<Item = sqlx::Result<ApGame>> + Send + 'f
     where
         's: 'f,
         'v: 'f,
     {
-        pg_insert(self.0.as_mut(), games)
+        pg_insert::<_, ViaModelWithPrimaryKey<ApGame>>(self.0.as_mut(), games)
     }
 
     fn get_ap_game(
@@ -333,13 +331,13 @@ impl<T: AsMut<<Postgres as sqlx::Database>::Connection> + Send> DataAccess for P
 
     fn create_ap_hints<'s, 'v, 'f>(
         &'s mut self,
-        hints: impl IntoIterator<Item = ApHint> + Send + 'v,
+        hints: impl IntoIterator<Item = ApHintInsertion> + Send + 'v,
     ) -> impl Stream<Item = sqlx::Result<ApHint>> + Send + 'f
     where
         's: 'f,
         'v: 'f,
     {
-        pg_insert(self.0.as_mut(), hints)
+        pg_insert::<_, ViaModelWithPrimaryKey<ApHint>>(self.0.as_mut(), hints)
     }
 
     fn update_ap_hint(
@@ -383,13 +381,13 @@ impl<T: AsMut<<Postgres as sqlx::Database>::Connection> + Send> DataAccess for P
 
     fn create_ct_users<'s, 'v, 'f>(
         &'s mut self,
-        users: impl IntoIterator<Item = CtUser> + Send + 'v,
+        users: impl IntoIterator<Item = CtUserInsertion> + Send + 'v,
     ) -> impl Stream<Item = sqlx::Result<CtUser>> + Send + 'f
     where
         's: 'f,
         'v: 'f,
     {
-        pg_insert(self.0.as_mut(), users)
+        pg_insert::<_, ViaModelWithPrimaryKey<CtUser>>(self.0.as_mut(), users)
     }
 
     fn update_ct_user(
@@ -402,13 +400,13 @@ impl<T: AsMut<<Postgres as sqlx::Database>::Connection> + Send> DataAccess for P
 
     fn create_js_errors<'s, 'v, 'f>(
         &'s mut self,
-        errors: impl IntoIterator<Item = JsError> + Send + 'v,
+        errors: impl IntoIterator<Item = JsErrorInsertion> + Send + 'v,
     ) -> impl Stream<Item = sqlx::Result<JsError>> + Send + 'f
     where
         's: 'f,
         'v: 'f,
     {
-        pg_insert(self.0.as_mut(), errors)
+        pg_insert::<_, ViaModelWithPrimaryKey<JsError>>(self.0.as_mut(), errors)
     }
 
     fn get_dashboard_trackers(
@@ -506,13 +504,13 @@ impl<T: AsMut<<Postgres as sqlx::Database>::Connection> + Send> DataAccess for P
 
     fn create_audits<'s, 'v, 'f>(
         &'s mut self,
-        audits: impl IntoIterator<Item = Audit> + Send + 'v,
+        audits: impl IntoIterator<Item = AuditInsertion> + Send + 'v,
     ) -> impl Stream<Item = sqlx::Result<Audit>> + Send + 'f
     where
         's: 'f,
         'v: 'f,
     {
-        pg_insert(self.0.as_mut(), audits)
+        pg_insert::<_, ViaModelWithPrimaryKey<Audit>>(self.0.as_mut(), audits)
     }
 }
 

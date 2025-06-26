@@ -1,7 +1,8 @@
 ARG GIT_COMMIT
 
 
-FROM docker.io/rust:1.86.0-alpine3.21 AS serverbuilder
+
+FROM docker.io/rust:1.87.0-alpine3.21 AS serverbuilder
 
 RUN apk add --no-cache musl-dev openssl-dev
 
@@ -11,6 +12,7 @@ WORKDIR /app/server
 
 RUN RUSTFLAGS=-Ctarget-feature=-crt-static cargo build --release && \
     cp target/release/cheese-trackers-server /app
+
 
 
 FROM docker.io/node:20-bookworm AS frontendbuilder
