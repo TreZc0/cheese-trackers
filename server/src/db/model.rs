@@ -272,6 +272,10 @@ pub struct ApTrackerDashboard {
     pub owner_discord_username: Option<String>,
     pub last_activity: Option<DateTime<Utc>>,
     pub dashboard_override_visibility: Option<bool>,
+    pub room_link: String,
+    pub last_port: Option<i32>,
+    pub next_port_check_at: Option<DateTime<Utc>>,
+    pub upstream_url: String,
 }
 
 /// Model for database view `ap_game`.
