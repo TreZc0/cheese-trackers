@@ -87,6 +87,9 @@ watch(
 
 <template>
     <div class="container">
+        <div class="alert alert-info text-center mb-3">
+            <strong>Notice:</strong> This instance will be taken down by January 15th. Please open new rooms at <a href="https://cheesetrackers.theincrediblewheelofchee.se" target="_blank" class="alert-link">https://cheesetrackers.theincrediblewheelofchee.se</a>
+        </div>
         <h2>Find/create tracker</h2>
         <div class="input-group">
             <input
